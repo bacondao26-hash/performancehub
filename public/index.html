@@ -1270,6 +1270,16 @@ function saveCheckInToFirestore(data){
   db.collection('checkins').doc(UID+'_'+TODAY).set({uid:UID,...data,ts:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(e=>console.warn('Firestore CI:',e));
 }
 
+// ── USER META (notes, cancels, PRs) ──
+function saveMetaToFirestore(key,value){
+  if(!UID)return;
+  db.collection('userMeta').doc(UID).set({[key]:value},{merge:true}).catch(e=>console.warn('Meta sync:',e));
+}
+function deleteMetaFromFirestore(key){
+  if(!UID)return;
+  db.collection('userMeta').doc(UID).update({[key]:firebase.firestore.FieldValue.delete()}).catch(()=>{});
+}
+
 // ── FIRESTORE → localStorage SYNC ──
 async function syncFromFirestore(){
   if(!UID)return;
@@ -1296,6 +1306,23 @@ async function syncFromFirestore(){
       const {date,sleep,sore,stress}=doc.data();
       if(date&&!LS.g('gk_rd_'+date))LS.s('gk_rd_'+date,{sleep,sore,stress});
     });
+    // User meta → restore notes, cancels, PRs
+    const metaSnap=await db.collection('userMeta').doc(UID).get();
+    if(metaSnap.exists){
+      Object.entries(metaSnap.data()).forEach(([k,v])=>{
+        if(k.startsWith('note__')){
+          const lsKey='gk_notes_'+k.slice(6);
+          if(v&&!LS.g(lsKey))LS.s(lsKey,v);
+        }else if(k.startsWith('cancel__')){
+          const date=k.slice(8);
+          if(v&&!LS.g('gk_cancel_'+date))LS.s('gk_cancel_'+date,v);
+        }else if(k.startsWith('pr__')){
+          const prKey='gk_pr_'+k.slice(4);
+          const ex=LS.g(prKey);
+          if(!ex||v.e1rm>ex.e1rm)LS.s(prKey,v);
+        }
+      });
+    }
   }catch(e){console.warn('Firestore sync:',e);}
 }
 
@@ -2307,7 +2334,8 @@ function checkPR(ei,dk,si,setData){
   const key=`gk_pr_${S.pi}_${dk}_${ei}`;
   const old=LS.g(key);
   if(!old||e1rm>old.e1rm){
-    LS.s(key,{e1rm:Math.round(e1rm*10)/10,lbs:w,reps:r,date:TODAY,name:exName});
+    const prData={e1rm:Math.round(e1rm*10)/10,lbs:w,reps:r,date:TODAY,name:exName};
+    LS.s(key,prData);saveMetaToFirestore(`pr__${S.pi}_${dk}_${ei}`,prData);
     // Save 1RM history for progression chart
     const hKey='gk_1rm_history_'+exName.toLowerCase().replace(/[^a-z0-9]/g,'_');
     const hist=LS.g(hKey)||[];
@@ -2568,14 +2596,15 @@ function selectCancelReason(id,btn){
 }
 function confirmCancelSession(){
   if(!_cancelReason){toast('Pick a reason first');return;}
-  LS.s('gk_cancel_'+_cancelDate,{reason:_cancelReason,ts:Date.now()});
+  const cancelData={reason:_cancelReason,ts:Date.now()};
+  LS.s('gk_cancel_'+_cancelDate,cancelData);saveMetaToFirestore(`cancel__${_cancelDate}`,cancelData);
   closeCancelModal();
   closeDayPanel();
   renderToday();renderCalendar();
   toast('Session cancelled');
 }
 function undoCancelSession(date){
-  try{localStorage.removeItem('gk_cancel_'+date);}catch(e){}
+  try{localStorage.removeItem('gk_cancel_'+date);}catch(e){}deleteMetaFromFirestore(`cancel__${date}`);
   renderToday();renderCalendar();
   toast('Session restored ✓');
 }
@@ -2811,7 +2840,7 @@ function finish(){
 }
 function closeDone(){
   const notes=$('session-notes').value.trim();
-  if(notes)LS.s(`gk_notes_${S.pi}_${S.wi}_${S.dk}`,notes);
+  if(notes){LS.s(`gk_notes_${S.pi}_${S.wi}_${S.dk}`,notes);saveMetaToFirestore(`note__${S.pi}_${S.wi}_${S.dk}`,notes);}
   $('done-ov').classList.remove('show');
   renderToday();
 }
