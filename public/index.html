@@ -1562,8 +1562,8 @@ auth.onAuthStateChanged(async user=>{
     if(!_appInited){
       _appInited=true;
       if(IS_COACH){
-        // Coach: force role, use existing PH[] with hardcoded dates
-        LS.s('gk_role','coach');
+        // Coach: set role to coach unless they've intentionally switched to athlete mode
+        if(LS.g('gk_role')!=='athlete')LS.s('gk_role','coach');
         seedProgramsToFirestore();
         const _reps=LS.g('gk_phase_replacements')||{};
         Object.keys(_reps).forEach(i=>{const idx=parseInt(i);if(idx<PH.length)PH[idx]=_reps[idx];});
